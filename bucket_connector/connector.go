@@ -99,7 +99,7 @@ func (c *BucketConnector) SaveFile(bucketJson string, req *UploaderReq) (string,
 
 	client, err := storage.NewClient(ctx, option.WithCredentialsFile(bucketJson))
 	if err != nil {
-		c.logger.Error("NewClient Error")
+		c.logger.Error("storage.NewClient Error")
 		return "", err
 	}
 
