@@ -20,7 +20,8 @@ import (
 var logger *zap.Logger
 
 const (
-	DefaultBucketName = "domain.com"
+	DefaultBucketName = "example.com"
+	DefaultJsonKey    = "gcp.json"
 )
 
 type UploaderReq struct {
@@ -32,6 +33,7 @@ type UploaderReq struct {
 type BucketConnector struct {
 	params Params
 	logger *zap.Logger
+	client *storage.Client
 	scope  string
 }
 
@@ -83,6 +85,18 @@ func (c *BucketConnector) onStart(ctx context.Context) error {
 
 	logger.Info("Starting BucketConnector")
 
+	viper.SetDefault(c.getConfigPath("bucket_name"), DefaultBucketName)
+	viper.SetDefault(c.getConfigPath("json_key"), DefaultJsonKey)
+
+	jsonKey := viper.GetString(c.getConfigPath("json_key"))
+	client, err := storage.NewClient(ctx, option.WithCredentialsFile(jsonKey))
+	if err != nil {
+		c.logger.Error("storage.NewClient Error")
+		return err
+	}
+
+	c.client = client
+
 	return nil
 }
 
@@ -90,18 +104,12 @@ func (c *BucketConnector) onStop(ctx context.Context) error {
 
 	c.logger.Info("Stopped BucketConnector")
 
-	return nil
+	return c.client.Close()
 }
 
-func (c *BucketConnector) SaveFile(bucketJson string, req *UploaderReq) (string, error) {
+func (c *BucketConnector) SaveFile(req *UploaderReq) (string, error) {
 	// new a bucket client
 	ctx := context.Background()
-
-	client, err := storage.NewClient(ctx, option.WithCredentialsFile(bucketJson))
-	if err != nil {
-		c.logger.Error("storage.NewClient Error")
-		return "", err
-	}
 
 	// decode, err := base64.StdEncoding.DecodeString(req.Data)
 	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(req.RawData))
@@ -114,7 +122,7 @@ func (c *BucketConnector) SaveFile(bucketJson string, req *UploaderReq) (string,
 
 	filePath := fmt.Sprintf("%s/%s", req.Category, fileName)
 
-	bucket := client.Bucket(viper.GetString(c.getConfigPath("bucket_name")))
+	bucket := c.client.Bucket(viper.GetString(c.getConfigPath("bucket_name")))
 	w := bucket.Object(filePath).NewWriter(ctx)
 	w.ACL = []storage.ACLRule{{Entity: storage.AllUsers, Role: storage.RoleReader}}
 
@@ -137,4 +145,8 @@ func (c *BucketConnector) SaveFile(bucketJson string, req *UploaderReq) (string,
 	url := fmt.Sprintf("https://%s", u.EscapedPath())
 
 	return url, nil
+}
+
+func (c *BucketConnector) GetClient() *storage.Client {
+	return c.client
 }
