@@ -60,6 +60,8 @@ func Module(scope string) fx.Option {
 				scope:  scope,
 			}
 
+			m.initDefaultConfigs()
+
 			return m
 		}),
 		fx.Populate(&m),
@@ -81,14 +83,20 @@ func (c *BucketConnector) getConfigPath(key string) string {
 	return fmt.Sprintf("%s.%s", c.scope, key)
 }
 
-func (c *BucketConnector) onStart(ctx context.Context) error {
-
-	logger.Info("Starting BucketConnector")
-
+func (c *BucketConnector) initDefaultConfigs() {
 	viper.SetDefault(c.getConfigPath("bucket_name"), DefaultBucketName)
 	viper.SetDefault(c.getConfigPath("json_key"), DefaultJsonKey)
+}
+
+func (c *BucketConnector) onStart(ctx context.Context) error {
 
 	jsonKey := viper.GetString(c.getConfigPath("json_key"))
+
+	logger.Info("Starting BucketConnector",
+		zap.String("bucket_name", viper.GetString(c.getConfigPath("bucket_name"))),
+		zap.String("json_key", jsonKey),
+	)
+
 	client, err := storage.NewClient(ctx, option.WithCredentialsFile(jsonKey))
 	if err != nil {
 		c.logger.Error("storage.NewClient Error")
