@@ -1,17 +1,18 @@
 package bucket_connector
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/url"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
-	"github.com/google/uuid"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
@@ -25,9 +26,9 @@ const (
 )
 
 type UploaderReq struct {
-    FileName string `json:"file_name"`
-    Category string `json:"category"`
-    RawData  string `json:"rowData"`
+	FileName string `json:"file_name"`
+	Category string `json:"category"`
+	RawData  string `json:"rowData"`
 }
 
 type BucketConnector struct {
@@ -115,6 +116,42 @@ func (c *BucketConnector) onStop(ctx context.Context) error {
 	return c.client.Close()
 }
 
+func (c *BucketConnector) WriteAsFile(filePath string, content []byte) (string, error) {
+
+	// Initializing the bucket wrtier
+	bucketName := viper.GetString(c.getConfigPath("bucket_name"))
+	bucket := c.client.Bucket(bucketName)
+	w := bucket.Object(filePath).NewWriter(context.Background())
+	w.ACL = []storage.ACLRule{
+		{
+			Entity: storage.AllUsers,
+			Role:   storage.RoleReader,
+		},
+	}
+
+	// Write the content to the bucket
+	reader := bytes.NewReader(content)
+	if _, err := io.Copy(w, reader); err != nil {
+		c.logger.Error("io.Copy Error")
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		c.logger.Error("io.Close Error")
+		return "", err
+	}
+
+	// Preparing external URL
+	u, err := url.Parse(fmt.Sprintf("%v/%v", w.Attrs().Bucket, w.Attrs().Name))
+	if err != nil {
+		c.logger.Error("url.Parse Error")
+		return "", err
+	}
+
+	url := fmt.Sprintf("https://%s", u.EscapedPath())
+
+	return url, nil
+}
+
 func (c *BucketConnector) SaveFile(req *UploaderReq) (string, error) {
 	// new a bucket client
 	ctx := context.Background()
@@ -125,7 +162,7 @@ func (c *BucketConnector) SaveFile(req *UploaderReq) (string, error) {
 	// init uploder
 	fileName := uuid.New().String()
 	if req.FileName != "" {
-		fileName = req.FileName;
+		fileName = req.FileName
 	}
 
 	filePath := fmt.Sprintf("%s/%s", req.Category, fileName)
