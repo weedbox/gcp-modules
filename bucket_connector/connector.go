@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -116,11 +117,58 @@ func (c *BucketConnector) onStop(ctx context.Context) error {
 	return c.client.Close()
 }
 
+func (c *BucketConnector) GetBucket() *storage.BucketHandle {
+	bucketName := viper.GetString(c.getConfigPath("bucket_name"))
+	return c.client.Bucket(bucketName)
+}
+
+func (c *BucketConnector) DeleteFileWithPrefix(filePath string) error {
+
+	bucket := c.GetBucket()
+
+	// Delete the objects with the prefix
+	it := bucket.Objects(context.Background(), &storage.Query{
+		Prefix: filePath,
+	})
+	for {
+		objAttrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		err = bucket.Object(objAttrs.Name).Delete(context.Background())
+		if err != nil && err != storage.ErrObjectNotExist {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *BucketConnector) DeleteFile(filePath string) error {
+
+	bucket := c.GetBucket()
+
+	// Delete the object
+	err := bucket.Object(filePath).Delete(context.Background())
+	if err != nil {
+
+		if err == storage.ErrObjectNotExist {
+			return nil
+		}
+
+		return err
+	}
+
+	return nil
+}
+
 func (c *BucketConnector) WriteAsFile(filePath string, content []byte) (string, error) {
 
-	// Initializing the bucket wrtier
-	bucketName := viper.GetString(c.getConfigPath("bucket_name"))
-	bucket := c.client.Bucket(bucketName)
+	bucket := c.GetBucket()
 	w := bucket.Object(filePath).NewWriter(context.Background())
 	w.ACL = []storage.ACLRule{
 		{
@@ -132,18 +180,15 @@ func (c *BucketConnector) WriteAsFile(filePath string, content []byte) (string, 
 	// Write the content to the bucket
 	reader := bytes.NewReader(content)
 	if _, err := io.Copy(w, reader); err != nil {
-		c.logger.Error("io.Copy Error")
 		return "", err
 	}
 	if err := w.Close(); err != nil {
-		c.logger.Error("io.Close Error")
 		return "", err
 	}
 
 	// Preparing external URL
 	u, err := url.Parse(fmt.Sprintf("%v/%v", w.Attrs().Bucket, w.Attrs().Name))
 	if err != nil {
-		c.logger.Error("url.Parse Error")
 		return "", err
 	}
 
